@@ -5,10 +5,9 @@ import { Table, Download, Calendar } from 'lucide-react';
 
 interface BreakdownTableProps {
   result: CalculationResult;
-  stockTicker: string;
 }
 
-export const BreakdownTable: React.FC<BreakdownTableProps> = ({ result, stockTicker }) => {
+export const BreakdownTable: React.FC<BreakdownTableProps> = ({ result }) => {
   const [viewMode, setViewMode] = useState<'annual' | 'monthly'>('annual');
 
   // Filter rows for annual view (month % 12 === 0 or last month)
@@ -21,21 +20,24 @@ export const BreakdownTable: React.FC<BreakdownTableProps> = ({ result, stockTic
     const headers = [
       'Mes',
       'Rotulo',
+      'Mes/Ano',
       'Total Investido (R$)',
       'Selic Bruto (R$)',
       'Selic Liquido (R$)',
-      `Acao ${stockTicker} Liquido (R$)`,
-      'Diferenca Acao-Selic (R$)',
+      ...result.stocks.flatMap((s) => [`Acao ${s.ticker} Liquido (R$)`, `Diferenca ${s.ticker}-Selic (R$)`]),
     ];
 
     const rows = result.monthlyData.map((d) => [
       d.month,
       d.monthLabel,
+      d.dateLabel,
       d.totalInvested.toFixed(2),
       d.selicGross.toFixed(2),
       d.selicNet.toFixed(2),
-      d.stockNet.toFixed(2),
-      (d.stockNet - d.selicNet).toFixed(2),
+      ...result.stocks.flatMap((s) => [
+        d.stocks[s.ticker].toFixed(2),
+        (d.stocks[s.ticker] - d.selicNet).toFixed(2),
+      ]),
     ]);
 
     const csvContent =
@@ -47,7 +49,7 @@ export const BreakdownTable: React.FC<BreakdownTableProps> = ({ result, stockTic
     link.setAttribute('href', encodedUri);
     link.setAttribute(
       'download',
-      `comparativo-selic-vs-${stockTicker.toLowerCase()}-${result.totalMonths}meses.csv`
+      `comparativo-selic-vs-${result.stocks.map((s) => s.ticker.toLowerCase()).join('-')}-${result.totalMonths}meses.csv`
     );
     document.body.appendChild(link);
     link.click();
@@ -65,7 +67,7 @@ export const BreakdownTable: React.FC<BreakdownTableProps> = ({ result, stockTic
             Tabela Detalhada do Rendimento
           </h3>
           <p className="text-xs text-slate-400 mt-0.5">
-            Acompanhe a progressão detalhada do patrimônio investido, imposto e lucro acumulado
+            Patrimônio líquido de cada opção; abaixo de cada ação, a vantagem sobre a Selic
           </p>
         </div>
 
@@ -117,33 +119,42 @@ export const BreakdownTable: React.FC<BreakdownTableProps> = ({ result, stockTic
               <th className="p-3.5">Total Investido</th>
               <th className="p-3.5">Selic Bruto</th>
               <th className="p-3.5 text-cyan-400">Selic Líquido</th>
-              <th className="p-3.5 text-emerald-400">Ação {stockTicker}</th>
-              <th className="p-3.5 pr-4 text-right">Vantagem Ação</th>
+              {result.stocks.map((s) => (
+                <th key={s.ticker} className="p-3.5 last:pr-4 whitespace-nowrap" style={{ color: s.color }}>
+                  Ação {s.ticker}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
             {displayedRows.map((row) => {
-              const stockAdvantage = row.stockNet - row.selicNet;
-              const isPositive = stockAdvantage >= 0;
-
               return (
                 <tr key={row.month} className="hover:bg-slate-800/40 transition-colors">
                   <td className="p-3.5 pl-4 font-sans font-bold text-white flex items-center gap-1.5">
                     <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                    <span>{row.month === 0 ? 'Início' : row.yearLabel}</span>
+                    <span className="flex flex-col">
+                      <span>{row.month === 0 ? 'Início' : row.yearLabel}</span>
+                      <span className="font-mono font-normal text-[10px] text-slate-400">{row.dateLabel}</span>
+                    </span>
                   </td>
                   <td className="p-3.5">{formatCurrency(row.totalInvested)}</td>
                   <td className="p-3.5 text-slate-400">{formatCurrency(row.selicGross)}</td>
                   <td className="p-3.5 font-bold text-cyan-300">{formatCurrency(row.selicNet)}</td>
-                  <td className="p-3.5 font-bold text-emerald-300">{formatCurrency(row.stockNet)}</td>
-                  <td
-                    className={`p-3.5 pr-4 text-right font-bold ${
-                      isPositive ? 'text-emerald-400' : 'text-amber-400'
-                    }`}
-                  >
-                    {isPositive ? '+' : ''}
-                    {formatCurrency(stockAdvantage)}
-                  </td>
+                  {result.stocks.map((s) => {
+                    const value = row.stocks[s.ticker];
+                    const advantage = value - row.selicNet;
+                    return (
+                      <td key={s.ticker} className="p-3.5 last:pr-4 whitespace-nowrap">
+                        <span className="font-bold block" style={{ color: s.color }}>
+                          {formatCurrency(value)}
+                        </span>
+                        <span className={`text-[10px] ${advantage >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                          {advantage >= 0 ? '+' : ''}
+                          {formatCurrency(advantage)}
+                        </span>
+                      </td>
+                    );
+                  })}
                 </tr>
               );
             })}

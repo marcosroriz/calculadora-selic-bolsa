@@ -12,11 +12,12 @@ import { Footer } from './components/Footer';
 
 export function App() {
   const initialDefaultInput: CalculationInput = {
-    ticker: 'PETR4',
+    tickers: ['PETR4', 'ITUB4', 'WEGE3'],
     windowYears: 5,
     initialInvestment: 10000,
     monthlyContribution: 500,
     selicRateAnnual: 10.75,
+    cagrOverrides: {},
     reinvestDividends: true,
     applySelicTax: true,
   };
@@ -41,10 +42,10 @@ export function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col gap-8">
         
         {/* 1. Winner Banner */}
-        <WinnerBanner result={result} stockTicker={input.ticker} />
+        <WinnerBanner result={result} />
 
         {/* 2. Summary Metric Cards */}
-        <SummaryCards result={result} stockTicker={input.ticker} />
+        <SummaryCards result={result} />
 
         {/* 3. Input Controls Panel */}
         <InputPanel
@@ -54,15 +55,15 @@ export function App() {
         />
 
         {/* 4. Interactive Wealth Evolution Chart */}
-        <ComparisonChart result={result} stockTicker={input.ticker} />
+        <ComparisonChart result={result} />
 
         {/* 5. Detailed Stock Info & Breakdown Table Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
           <div className="lg:col-span-1">
-            <StockInfoCard ticker={input.ticker} windowYears={input.windowYears} />
+            <StockInfoCard tickers={input.tickers} windowYears={input.windowYears} />
           </div>
           <div className="lg:col-span-2">
-            <BreakdownTable result={result} stockTicker={input.ticker} />
+            <BreakdownTable result={result} />
           </div>
         </div>
 

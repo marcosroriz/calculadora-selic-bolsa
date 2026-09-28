@@ -3,6 +3,7 @@ import type {
   CalculationResult,
   MonthlyDataPoint,
   StockItem,
+  StockResult,
 } from '../types/calculator';
 import { getStockInfo } from '../data/stocksData';
 
@@ -44,167 +45,184 @@ export function formatPercent(value: number, decimals: number = 2): string {
   }).format(value / 100);
 }
 
+export const MAX_SELECTED_STOCKS = 5;
+
+// Distinct series colors for the dark theme (Selic uses cyan, invested uses slate)
+export const STOCK_SERIES_COLORS = ['#10b981', '#a78bfa', '#f472b6', '#fb923c', '#facc15'];
+
+const round2 = (value: number) => Math.round(value * 100) / 100;
+const percentOf = (value: number, base: number) => (base > 0 ? (value / base) * 100 : 0);
+
+const MONTH_NAMES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+// Calendar label for month m of a simulation that started at startDate, e.g. "set/2021"
+function formatMonthYear(startDate: Date, m: number) {
+  const date = new Date(startDate.getFullYear(), startDate.getMonth() + m, 1);
+  return `${MONTH_NAMES[date.getMonth()]}/${date.getFullYear()}`;
+}
+
+function monthLabels(m: number, startDate: Date) {
+  const dateLabel = formatMonthYear(startDate, m);
+  if (m === 0) return { monthLabel: 'Início', yearLabel: '0 ano', dateLabel };
+  const yearNumber = Math.floor(m / 12);
+  const yearLabel = m % 12 === 0 ? `${yearNumber} ano${yearNumber > 1 ? 's' : ''}` : `Mês ${m}`;
+  return { monthLabel: `Mês ${m}`, yearLabel, dateLabel };
+}
+
 /**
- * Main Calculation Engine
+ * Simulates the Selic path month by month. Returns net balance per month (index = month).
  */
-export function calculateComparison(input: CalculationInput): CalculationResult {
-  const stockInfo: StockItem = getStockInfo(input.ticker);
-  const totalMonths = input.windowYears * 12;
-
-  // Get effective CAGR and Dividend Yield based on selected window or custom overrides
-  const windowPerf = stockInfo.performance[input.windowYears] || stockInfo.performance[5];
-  const stockCagrAnnual = input.customStockCagr ?? windowPerf.cagr;
-  const stockDivYieldAnnual = input.customDividendYield ?? windowPerf.dividendYield;
-
-  // Monthly Interest Rates
+function simulateSelic(input: CalculationInput, totalMonths: number) {
   // Selic monthly rate: (1 + R_annual)^(1/12) - 1
   const selicMonthlyRate = Math.pow(1 + input.selicRateAnnual / 100, 1 / 12) - 1;
 
-  // Stock price monthly appreciation rate
-  const stockMonthlyAppreciation = Math.pow(1 + Math.max(-99, stockCagrAnnual) / 100, 1 / 12) - 1;
-  
-  // Stock monthly dividend rate
-  const stockMonthlyDivRate = (stockDivYieldAnnual / 100) / 12;
+  let gross = input.initialInvestment;
+  let invested = input.initialInvestment;
+  const grossByMonth = [gross];
+  const netByMonth = [gross];
+  const investedByMonth = [invested];
 
-  let currentTotalInvested = input.initialInvestment;
-  
-  // Selic Tracking
-  let selicGrossBalance = input.initialInvestment;
-
-  // Stock Tracking
-  let stockPriceBalance = input.initialInvestment; // Principal invested in stock share value
-  let stockDividendsCash = 0; // Accumulated dividends if not reinvested
-  let stockDividendsTotal = 0; // All dividends earned (reinvested or not)
-
-  const monthlyData: MonthlyDataPoint[] = [];
-
-  // Initial Month 0 / Start
-  const selicTaxRateInitial = getSelicTaxRate(0);
-  const selicInitialProfit = Math.max(0, selicGrossBalance - currentTotalInvested);
-  const selicInitialNet = selicGrossBalance - (input.applySelicTax ? selicInitialProfit * selicTaxRateInitial : 0);
-
-  monthlyData.push({
-    month: 0,
-    monthLabel: 'Início',
-    yearLabel: '0 ano',
-    totalInvested: currentTotalInvested,
-    selicGross: Math.round(selicGrossBalance * 100) / 100,
-    selicNet: Math.round(selicInitialNet * 100) / 100,
-    stockGross: Math.round(stockPriceBalance * 100) / 100,
-    stockNet: Math.round(stockPriceBalance * 100) / 100,
-    stockDividendsAccumulated: 0,
-  });
-
-  // Calculate month by month
   for (let m = 1; m <= totalMonths; m++) {
-    // 1. Selic Growth
-    // Yield on existing balance
-    selicGrossBalance = selicGrossBalance * (1 + selicMonthlyRate);
-    // Add monthly contribution at month end
-    selicGrossBalance += input.monthlyContribution;
+    // Yield on existing balance, then monthly contribution at month end
+    gross = gross * (1 + selicMonthlyRate) + input.monthlyContribution;
+    invested += input.monthlyContribution;
 
-    // 2. Stock Growth
-    // Price appreciation on existing stock portfolio
-    stockPriceBalance = stockPriceBalance * (1 + stockMonthlyAppreciation);
+    // Regressive tax on profit if redeemed at this month
+    const profit = Math.max(0, gross - invested);
+    const tax = input.applySelicTax ? profit * getSelicTaxRate(m) : 0;
 
-    // Dividends generated this month based on portfolio value
-    const monthDividendEarned = stockPriceBalance * stockMonthlyDivRate;
-    stockDividendsTotal += monthDividendEarned;
+    grossByMonth.push(gross);
+    netByMonth.push(gross - tax);
+    investedByMonth.push(invested);
+  }
 
+  return { grossByMonth, netByMonth, investedByMonth };
+}
+
+/**
+ * Simulates one stock month by month. Returns net value per month (index = month).
+ */
+function simulateStock(input: CalculationInput, stockInfo: StockItem, totalMonths: number) {
+  const windowPerf = stockInfo.performance[input.windowYears] || stockInfo.performance[5];
+  const cagrAnnual = input.cagrOverrides[stockInfo.ticker] ?? windowPerf.cagr;
+  const dividendYieldAnnual = windowPerf.dividendYield;
+
+  // Stock price monthly appreciation rate and monthly dividend rate
+  const monthlyAppreciation = Math.pow(1 + Math.max(-99, cagrAnnual) / 100, 1 / 12) - 1;
+  const monthlyDivRate = dividendYieldAnnual / 100 / 12;
+
+  let priceBalance = input.initialInvestment; // Value of shares held
+  let dividendsCash = 0; // Accumulated dividends if not reinvested
+  let dividendsTotal = 0; // All dividends earned (reinvested or not)
+  const netByMonth = [priceBalance];
+
+  for (let m = 1; m <= totalMonths; m++) {
+    priceBalance *= 1 + monthlyAppreciation;
+
+    const dividend = priceBalance * monthlyDivRate;
+    dividendsTotal += dividend;
     if (input.reinvestDividends) {
-      // Reinvest dividend back into buying more shares
-      stockPriceBalance += monthDividendEarned;
+      priceBalance += dividend;
     } else {
-      // Accumulate dividend in cash
-      stockDividendsCash += monthDividendEarned;
+      dividendsCash += dividend;
     }
 
-    // Add monthly contribution to buy more shares
-    stockPriceBalance += input.monthlyContribution;
+    // Monthly contribution buys more shares
+    priceBalance += input.monthlyContribution;
 
-    // Track total capital invested
-    currentTotalInvested += input.monthlyContribution;
+    // Dividends are tax-exempt in Brazil; buy & hold under the monthly sales limit is exempt too,
+    // so net value is the total gross value.
+    netByMonth.push(priceBalance + dividendsCash);
+  }
 
-    // Current Selic Net calculation (Regressive Tax)
-    const currentTaxRate = getSelicTaxRate(m);
-    const selicProfit = Math.max(0, selicGrossBalance - currentTotalInvested);
-    const selicTaxPaid = input.applySelicTax ? selicProfit * currentTaxRate : 0;
-    const selicNetBalance = selicGrossBalance - selicTaxPaid;
+  return { netByMonth, cagrAnnual, dividendYieldAnnual, dividendsTotal };
+}
 
-    // Stock Net calculation (Total value = stock share value + dividends accumulated)
-    const stockTotalGrossValue = stockPriceBalance + stockDividendsCash;
-    // Dividends are tax-exempt in Brazil. Capital gain tax (15% if applicable, or 0% for long term exempt < R$20k/mo)
-    // We treat stock net as total value since buy & hold under limit is tax exempt, or light capital tax.
-    const stockNetBalance = stockTotalGrossValue;
+/**
+ * Main Calculation Engine: Selic vs each selected stock, all with the same contributions.
+ */
+export function calculateComparison(input: CalculationInput): CalculationResult {
+  const totalMonths = input.windowYears * 12;
+  const tickers = input.tickers.length > 0 ? input.tickers : ['PETR4'];
 
-    const yearNumber = Math.floor(m / 12);
-    const monthInYear = m % 12;
-    const monthLabel = `Mês ${m}`;
-    const yearLabel = monthInYear === 0 ? `${yearNumber} ano${yearNumber > 1 ? 's' : ''}` : `Mês ${m}`;
+  // Historical windows end at the current month, so the simulation starts N years ago
+  const now = new Date();
+  const startDate = new Date(now.getFullYear(), now.getMonth() - totalMonths, 1);
 
+  const selic = simulateSelic(input, totalMonths);
+  const totalInvested = selic.investedByMonth[totalMonths];
+
+  const selicFinalGross = selic.grossByMonth[totalMonths];
+  const selicFinalNet = selic.netByMonth[totalMonths];
+  const selicTaxRateApplied = getSelicTaxRate(totalMonths);
+  const selicTaxPaid = selicFinalGross - selicFinalNet;
+  const selicNetProfit = selicFinalNet - totalInvested;
+
+  const simulations = tickers.map((ticker, index) => {
+    const info = getStockInfo(ticker);
+    return { info, color: STOCK_SERIES_COLORS[index % STOCK_SERIES_COLORS.length], ...simulateStock(input, info, totalMonths) };
+  });
+
+  const stocks: StockResult[] = simulations.map((sim) => {
+    const finalNet = sim.netByMonth[totalMonths];
+    const netProfit = finalNet - totalInvested;
+    const diffVsSelic = finalNet - selicFinalNet;
+    return {
+      ticker: sim.info.ticker,
+      name: sim.info.name,
+      color: sim.color,
+      cagrAnnual: sim.cagrAnnual,
+      dividendYieldAnnual: sim.dividendYieldAnnual,
+      finalGross: round2(finalNet),
+      finalNet: round2(finalNet),
+      netProfit: round2(netProfit),
+      profitPercentage: round2(percentOf(netProfit, totalInvested)),
+      totalDividends: round2(sim.dividendsTotal),
+      diffVsSelic: round2(diffVsSelic),
+      diffVsSelicPercentage:
+        Math.min(finalNet, selicFinalNet) > 0
+          ? round2((Math.abs(diffVsSelic) / Math.min(finalNet, selicFinalNet)) * 100)
+          : 0,
+    };
+  });
+
+  const monthlyData: MonthlyDataPoint[] = [];
+  for (let m = 0; m <= totalMonths; m++) {
     monthlyData.push({
       month: m,
-      monthLabel,
-      yearLabel,
-      totalInvested: Math.round(currentTotalInvested * 100) / 100,
-      selicGross: Math.round(selicGrossBalance * 100) / 100,
-      selicNet: Math.round(selicNetBalance * 100) / 100,
-      stockGross: Math.round(stockTotalGrossValue * 100) / 100,
-      stockNet: Math.round(stockNetBalance * 100) / 100,
-      stockDividendsAccumulated: Math.round(stockDividendsTotal * 100) / 100,
+      ...monthLabels(m, startDate),
+      totalInvested: round2(selic.investedByMonth[m]),
+      selicGross: round2(selic.grossByMonth[m]),
+      selicNet: round2(selic.netByMonth[m]),
+      stocks: Object.fromEntries(simulations.map((sim) => [sim.info.ticker, round2(sim.netByMonth[m])])),
     });
   }
 
-  // Final Results
-  const selicFinalGross = selicGrossBalance;
-  const selicTaxRateApplied = getSelicTaxRate(totalMonths);
-  const selicProfitGross = Math.max(0, selicFinalGross - currentTotalInvested);
-  const selicTaxPaid = input.applySelicTax ? selicProfitGross * selicTaxRateApplied : 0;
-  const selicFinalNet = selicFinalGross - selicTaxPaid;
-  const selicNetProfit = selicFinalNet - currentTotalInvested;
-  const selicProfitPercentage = (selicNetProfit / currentTotalInvested) * 100;
-
-  const stockFinalGross = stockPriceBalance + stockDividendsCash;
-  const stockFinalNet = stockFinalGross; // dividends exempt in BR
-  const stockNetProfit = stockFinalNet - currentTotalInvested;
-  const stockProfitPercentage = (stockNetProfit / currentTotalInvested) * 100;
-
-  // Winner logic
+  // Winner logic: best stock vs Selic
+  const bestStock = stocks.reduce((best, s) => (s.finalNet > best.finalNet ? s : best), stocks[0]);
   let winner: 'selic' | 'stock' | 'draw' = 'draw';
-  const diff = Math.abs(stockFinalNet - selicFinalNet);
-  
-  if (Math.abs(stockFinalNet - selicFinalNet) < 1.0) {
-    winner = 'draw';
-  } else if (stockFinalNet > selicFinalNet) {
-    winner = 'stock';
-  } else {
-    winner = 'selic';
+  if (Math.abs(bestStock.diffVsSelic) >= 1.0) {
+    winner = bestStock.diffVsSelic > 0 ? 'stock' : 'selic';
   }
-
-  const minVal = Math.min(stockFinalNet, selicFinalNet);
-  const winnerPercentageDiff = minVal > 0 ? (diff / minVal) * 100 : 0;
 
   return {
     totalMonths,
-    totalInvested: Math.round(currentTotalInvested * 100) / 100,
+    totalInvested: round2(totalInvested),
 
-    selicFinalGross: Math.round(selicFinalGross * 100) / 100,
-    selicFinalNet: Math.round(selicFinalNet * 100) / 100,
-    selicNetProfit: Math.round(selicNetProfit * 100) / 100,
-    selicProfitPercentage: Math.round(selicProfitPercentage * 100) / 100,
-    selicTaxPaid: Math.round(selicTaxPaid * 100) / 100,
+    selicFinalGross: round2(selicFinalGross),
+    selicFinalNet: round2(selicFinalNet),
+    selicNetProfit: round2(selicNetProfit),
+    selicProfitPercentage: round2(percentOf(selicNetProfit, totalInvested)),
+    selicTaxPaid: round2(selicTaxPaid),
     selicTaxRateApplied: selicTaxRateApplied * 100,
 
-    stockFinalGross: Math.round(stockFinalGross * 100) / 100,
-    stockFinalNet: Math.round(stockFinalNet * 100) / 100,
-    stockNetProfit: Math.round(stockNetProfit * 100) / 100,
-    stockProfitPercentage: Math.round(stockProfitPercentage * 100) / 100,
-    stockTotalDividends: Math.round(stockDividendsTotal * 100) / 100,
-    stockTaxPaid: 0,
+    stocks,
 
     winner,
-    winnerDifference: Math.round(diff * 100) / 100,
-    winnerPercentageDiff: Math.round(winnerPercentageDiff * 100) / 100,
+    bestStock,
+    winnerDifference: Math.abs(bestStock.diffVsSelic),
+    winnerPercentageDiff: bestStock.diffVsSelicPercentage,
+    stocksBeatingSelic: stocks.filter((s) => s.diffVsSelic >= 1.0).length,
 
     monthlyData,
   };

@@ -1,18 +1,41 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { getStockInfo } from '../data/stocksData';
 import type { TimeWindow } from '../types/calculator';
 import { Building2, PieChart, Info, TrendingUp } from 'lucide-react';
 
 interface StockInfoCardProps {
-  ticker: string;
+  tickers: string[];
   windowYears: TimeWindow;
 }
 
-export const StockInfoCard: React.FC<StockInfoCardProps> = ({ ticker, windowYears }) => {
+export const StockInfoCard: React.FC<StockInfoCardProps> = ({ tickers, windowYears }) => {
+  const [activeTicker, setActiveTicker] = useState(tickers[0]);
+  // Fall back to the first stock if the active one was removed from the selection
+  const ticker = tickers.includes(activeTicker) ? activeTicker : tickers[0];
   const stock = getStockInfo(ticker);
 
   return (
     <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl backdrop-blur-md flex flex-col gap-6">
+
+      {/* Tabs to switch between selected stocks */}
+      {tickers.length > 1 && (
+        <div className="flex flex-wrap gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800 self-start">
+          {tickers.map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setActiveTicker(t)}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                t === ticker
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
       
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import type { CalculationInput, TimeWindow } from '../types/calculator';
 import { POPULAR_STOCKS, getStockInfo } from '../data/stocksData';
-import { DollarSign, Calendar, Search, Settings2, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
-import { formatCurrency } from '../utils/financeCalculations';
+import { DollarSign, Calendar, Search, Settings2, RotateCcw, ChevronDown, ChevronUp, X, Check } from 'lucide-react';
+import { formatCurrency, MAX_SELECTED_STOCKS, STOCK_SERIES_COLORS } from '../utils/financeCalculations';
 
 interface InputPanelProps {
   input: CalculationInput;
@@ -13,7 +13,6 @@ interface InputPanelProps {
 export const InputPanel: React.FC<InputPanelProps> = ({ input, onChange, onReset }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [customTickerInput, setCustomTickerInput] = useState('');
-  const [isCustomMode, setIsCustomMode] = useState(false);
 
   const windowOptions: { label: string; value: TimeWindow }[] = [
     { label: '1 Ano', value: 1 },
@@ -22,28 +21,30 @@ export const InputPanel: React.FC<InputPanelProps> = ({ input, onChange, onReset
     { label: '10 Anos', value: 10 },
   ];
 
-  const handleStockSelect = (ticker: string) => {
-    setIsCustomMode(false);
-    onChange({
-      ...input,
-      ticker,
-      customStockCagr: undefined,
-      customDividendYield: undefined,
-    });
+  const isFull = input.tickers.length >= MAX_SELECTED_STOCKS;
+
+  const handleStockToggle = (ticker: string) => {
+    if (input.tickers.includes(ticker)) {
+      // Keep at least one stock selected
+      if (input.tickers.length === 1) return;
+      const { [ticker]: _removed, ...cagrOverrides } = input.cagrOverrides;
+      onChange({ ...input, tickers: input.tickers.filter((t) => t !== ticker), cagrOverrides });
+    } else if (!isFull) {
+      onChange({ ...input, tickers: [...input.tickers, ticker] });
+    }
   };
 
   const handleCustomTickerSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (customTickerInput.trim()) {
-      const cleanTicker = customTickerInput.trim().toUpperCase();
-      onChange({
-        ...input,
-        ticker: cleanTicker,
-      });
+    const cleanTicker = customTickerInput.trim().toUpperCase();
+    if (cleanTicker && !input.tickers.includes(cleanTicker) && !isFull) {
+      onChange({ ...input, tickers: [...input.tickers, cleanTicker] });
+      setCustomTickerInput('');
     }
   };
 
-  const selectedStockObj = getStockInfo(input.ticker);
+  const colorOf = (ticker: string) =>
+    STOCK_SERIES_COLORS[input.tickers.indexOf(ticker) % STOCK_SERIES_COLORS.length];
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl shadow-slate-950/50 backdrop-blur-xl relative overflow-hidden">
@@ -61,7 +62,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({ input, onChange, onReset
               Parâmetros da Simulação
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Escolha a ação, prazo e aportes para comparar a evolução do seu patrimônio
+              Escolha uma ou mais ações, prazo e aportes para comparar a evolução do seu patrimônio
             </p>
           </div>
           
@@ -81,27 +82,60 @@ export const InputPanel: React.FC<InputPanelProps> = ({ input, onChange, onReset
           {/* 1. Seleção de Ação */}
           <div className="flex flex-col gap-2.5 lg:col-span-2">
             <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
-              <span>Selecione a Ação (B3)</span>
+              <span>Selecione as Ações (B3)</span>
               <span className="text-[11px] font-normal text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                {input.ticker}
+                {input.tickers.length}/{MAX_SELECTED_STOCKS} selecionadas
               </span>
             </label>
+
+            {/* Selected chips */}
+            <div className="flex flex-wrap gap-2">
+              {input.tickers.map((ticker) => (
+                <span
+                  key={ticker}
+                  className="inline-flex items-center gap-1.5 pl-2.5 pr-1 py-1 rounded-full bg-slate-800/80 border border-slate-700 text-xs font-bold text-white"
+                >
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: colorOf(ticker) }} />
+                  {ticker}
+                  <button
+                    type="button"
+                    onClick={() => handleStockToggle(ticker)}
+                    disabled={input.tickers.length === 1}
+                    aria-label={`Remover ${ticker}`}
+                    className="p-0.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
 
             {/* Presets Grid */}
             <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
               {POPULAR_STOCKS.map((stock) => {
-                const isSelected = input.ticker === stock.ticker && !isCustomMode;
+                const isSelected = input.tickers.includes(stock.ticker);
+                const isDisabled = !isSelected && isFull;
                 return (
                   <button
                     key={stock.ticker}
                     type="button"
-                    onClick={() => handleStockSelect(stock.ticker)}
-                    className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border text-xs font-bold transition-all ${
+                    onClick={() => handleStockToggle(stock.ticker)}
+                    disabled={isDisabled}
+                    aria-pressed={isSelected}
+                    className={`relative flex flex-col items-center justify-center p-2.5 rounded-2xl border text-xs font-bold transition-all ${
                       isSelected
-                        ? 'bg-emerald-500/15 border-emerald-500/80 text-emerald-300 shadow-lg shadow-emerald-500/10 scale-[1.02]'
+                        ? 'bg-emerald-500/15 border-emerald-500/80 text-emerald-300 shadow-lg shadow-emerald-500/10'
+                        : isDisabled
+                        ? 'bg-slate-800/30 border-slate-800 text-slate-600 cursor-not-allowed'
                         : 'bg-slate-800/50 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:border-slate-600 hover:text-white'
                     }`}
                   >
+                    {isSelected && (
+                      <Check
+                        className="w-3 h-3 absolute top-1.5 right-1.5"
+                        style={{ color: colorOf(stock.ticker) }}
+                      />
+                    )}
                     <span className="text-sm font-extrabold">{stock.ticker}</span>
                     <span className="text-[10px] text-slate-400 truncate max-w-full font-normal">
                       {stock.name.split(' ')[0]}
@@ -117,20 +151,19 @@ export const InputPanel: React.FC<InputPanelProps> = ({ input, onChange, onReset
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="Ou digite outro ticker (ex: BOVA11, PRIO3)..."
+                  placeholder={isFull ? `Limite de ${MAX_SELECTED_STOCKS} ações atingido` : 'Ou adicione outro ticker (ex: PRIO3)...'}
                   value={customTickerInput}
-                  onChange={(e) => {
-                    setCustomTickerInput(e.target.value.toUpperCase());
-                    setIsCustomMode(true);
-                  }}
+                  disabled={isFull}
+                  onChange={(e) => setCustomTickerInput(e.target.value.toUpperCase())}
                   className="w-full pl-9 pr-3 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
                 />
               </div>
               <button
                 type="submit"
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-600/20"
+                disabled={isFull}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-400 disabled:shadow-none text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-600/20"
               >
-                Buscar
+                Adicionar
               </button>
             </form>
           </div>
@@ -247,38 +280,27 @@ export const InputPanel: React.FC<InputPanelProps> = ({ input, onChange, onReset
             </div>
           </div>
 
-          {/* 5. Ticker Performance Quick Summary Card */}
-          <div className="flex flex-col justify-between bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 lg:col-span-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: selectedStockObj.color }}
-                />
-                <span className="text-sm font-bold text-white">{selectedStockObj.name}</span>
-              </div>
-              <span className="text-xs px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
-                {selectedStockObj.badge}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-800/60">
-              <div>
-                <span className="text-[11px] text-slate-400 block">CAGR Histórico ({input.windowYears}a)</span>
-                <span className="text-sm font-mono font-bold text-emerald-400">
-                  {input.customStockCagr !== undefined
-                    ? `${input.customStockCagr.toFixed(2)}% aa`
-                    : `${selectedStockObj.performance[input.windowYears].cagr.toFixed(2)}% aa`}
-                </span>
-              </div>
-              <div>
-                <span className="text-[11px] text-slate-400 block">Dividend Yield Estimado</span>
-                <span className="text-sm font-mono font-bold text-cyan-400">
-                  {input.customDividendYield !== undefined
-                    ? `${input.customDividendYield.toFixed(2)}% aa`
-                    : `${selectedStockObj.performance[input.windowYears].dividendYield.toFixed(2)}% aa`}
-                </span>
-              </div>
+          {/* 5. Selected Stocks Quick Summary */}
+          <div className="flex flex-col bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 lg:col-span-2">
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-2 text-xs items-center">
+              <span className="text-[11px] text-slate-400">Ação</span>
+              <span className="text-[11px] text-slate-400 text-right">CAGR ({input.windowYears}a)</span>
+              <span className="text-[11px] text-slate-400 text-right">Dividend Yield</span>
+              {input.tickers.map((ticker) => {
+                const stock = getStockInfo(ticker);
+                const perf = stock.performance[input.windowYears];
+                const cagr = input.cagrOverrides[ticker] ?? perf.cagr;
+                return (
+                  <React.Fragment key={ticker}>
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colorOf(ticker) }} />
+                      <span className="font-bold text-white truncate">{stock.name}</span>
+                    </span>
+                    <span className="font-mono font-bold text-emerald-400 text-right">{cagr.toFixed(2)}% aa</span>
+                    <span className="font-mono font-bold text-cyan-400 text-right">{perf.dividendYield.toFixed(2)}% aa</span>
+                  </React.Fragment>
+                );
+              })}
             </div>
           </div>
 
@@ -317,24 +339,6 @@ export const InputPanel: React.FC<InputPanelProps> = ({ input, onChange, onReset
                 />
               </div>
 
-              {/* Custom Stock CAGR Override */}
-              <div>
-                <label className="text-xs text-slate-300 block mb-1">Overide CAGR da Ação (% aa)</label>
-                <input
-                  type="number"
-                  step={0.5}
-                  placeholder={`Padrão: ${selectedStockObj.performance[input.windowYears].cagr}%`}
-                  value={input.customStockCagr ?? ''}
-                  onChange={(e) =>
-                    onChange({
-                      ...input,
-                      customStockCagr: e.target.value !== '' ? Number(e.target.value) : undefined,
-                    })
-                  }
-                  className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-xs font-mono text-cyan-400 focus:outline-none"
-                />
-              </div>
-
               {/* Dividend Reinvestment Toggle */}
               <div className="flex flex-col justify-center">
                 <label className="text-xs text-slate-300 block mb-1">Reinvestir Dividendos?</label>
@@ -365,6 +369,35 @@ export const InputPanel: React.FC<InputPanelProps> = ({ input, onChange, onReset
                 >
                   {input.applySelicTax ? 'Sim (Conforme Tabela Regressiva)' : 'Não (Rendimento Bruto)'}
                 </button>
+              </div>
+
+              {/* Custom CAGR Override per selected stock */}
+              <div className="sm:col-span-2 lg:col-span-4 border-t border-slate-800 pt-4">
+                <span className="text-xs text-slate-300 block mb-2">Override do CAGR por Ação (% aa)</span>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {input.tickers.map((ticker) => (
+                    <label key={ticker} className="flex flex-col gap-1">
+                      <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colorOf(ticker) }} />
+                        {ticker}
+                      </span>
+                      <input
+                        type="number"
+                        step={0.5}
+                        placeholder={`Padrão: ${getStockInfo(ticker).performance[input.windowYears].cagr}%`}
+                        value={input.cagrOverrides[ticker] ?? ''}
+                        onChange={(e) => {
+                          const { [ticker]: _removed, ...rest } = input.cagrOverrides;
+                          onChange({
+                            ...input,
+                            cagrOverrides: e.target.value !== '' ? { ...rest, [ticker]: Number(e.target.value) } : rest,
+                          });
+                        }}
+                        className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-xs font-mono text-cyan-400 focus:outline-none"
+                      />
+                    </label>
+                  ))}
+                </div>
               </div>
 
             </div>

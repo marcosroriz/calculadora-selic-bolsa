@@ -6,10 +6,12 @@ import confetti from 'canvas-confetti';
 
 interface WinnerBannerProps {
   result: CalculationResult;
-  stockTicker: string;
 }
 
-export const WinnerBanner: React.FC<WinnerBannerProps> = ({ result, stockTicker }) => {
+export const WinnerBanner: React.FC<WinnerBannerProps> = ({ result }) => {
+  const best = result.bestStock;
+  const stockTicker = best.ticker;
+  const totalStocks = result.stocks.length;
   const isStockWinner = result.winner === 'stock';
   const isSelicWinner = result.winner === 'selic';
 
@@ -105,9 +107,16 @@ export const WinnerBanner: React.FC<WinnerBannerProps> = ({ result, stockTicker 
               )}
             </h3>
 
+            {totalStocks > 1 && (
+              <p className="text-xs font-semibold text-slate-200 mt-1">
+                {result.stocksBeatingSelic} de {totalStocks} ações selecionadas superaram a Selic
+                {' '}— melhor ação: <span style={{ color: best.color }}>{stockTicker}</span>
+              </p>
+            )}
+
             <p className="text-xs text-slate-300 mt-1">
               {isStockWinner
-                ? `Investindo em ${stockTicker} você teria obteve um retorno ${result.winnerPercentageDiff.toFixed(
+                ? `Investindo em ${stockTicker} você teria obtido um retorno ${result.winnerPercentageDiff.toFixed(
                     1
                   )}% maior do que na taxa Selic no período.`
                 : isSelicWinner
@@ -130,13 +139,15 @@ export const WinnerBanner: React.FC<WinnerBannerProps> = ({ result, stockTicker 
                 : 'bg-slate-900/60 border-slate-800 text-slate-300'
             }`}
           >
-            <span className="text-[11px] font-semibold text-slate-400 block">{stockTicker} Líquido</span>
-            <span className="text-lg font-mono font-extrabold text-emerald-400">
-              {formatCurrency(result.stockFinalNet)}
+            <span className="text-[11px] font-semibold text-slate-400 block">
+              {totalStocks > 1 ? `Melhor: ${stockTicker}` : `${stockTicker} Líquido`}
             </span>
-            <div className="flex items-center justify-center gap-1 text-[11px] font-bold text-emerald-400 mt-0.5">
+            <span className="text-lg font-mono font-extrabold" style={{ color: best.color }}>
+              {formatCurrency(best.finalNet)}
+            </span>
+            <div className="flex items-center justify-center gap-1 text-[11px] font-bold mt-0.5" style={{ color: best.color }}>
               <ArrowUpRight className="w-3 h-3" />
-              <span>+{result.stockProfitPercentage.toFixed(1)}%</span>
+              <span>{best.profitPercentage >= 0 ? '+' : ''}{best.profitPercentage.toFixed(1)}%</span>
             </div>
           </div>
 
